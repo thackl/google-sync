@@ -38,7 +38,7 @@ gs_delete(ss2)
 #+END_SRC
 
 ** googlesheets update working sheets workflow
-using gs_ws_delete, gs_ws_add I should be able to swap entire updates working sheets
+   using gs_ws_delete, gs_ws_add I should be able to swap entire updates working sheets
 
 #+BEGIN_SRC R
 library(tidyverse)
@@ -52,13 +52,7 @@ ss1 <- ss1 %>% gs_gs() # re-register
 ss1 %>% gs_ws_new("iris-head", input=head(iris))
 ss1 <- ss1 %>% gs_gs() # re-register
 ss1
-
-
-
-#1233556277
 #+END_SRC
-
-
 
 ** googledrive (tidyverse)
 
@@ -78,5 +72,93 @@ x %>% drive_update(media="/tmp/iris-head.tsv")
 write_tsv(head(cars), "/tmp/cars-head.tsv")
 # Don't know how this should work - drive isn't really compatible with googlesheets objects
 x %>% drive_update(media="/tmp/cars-head.tsv")
+#+END_SRC
+
+** sync scripts
+
+#+BEGIN_SRC sh
+# Start from google sheet
+gss-sync
+
+# sheet from tsv
+init-from-tsv
+
+#+END_SRC
+
+*** gss-down
+Download spread sheet and split into tsv
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googlesheets)
+key <- "1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ"
+ss1 <- gs_key(key)
+
+# split sheet into tsvs
+working_sheets <- ss1 %>% gs_ws_ls()
+ws_pre <- paste0(ss1$sheet_title, "_")
+for (ws in working_sheets){
+    ws_tsv <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+    ws_new <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.new')
+    ws_bak <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.bak')
+
+    # download all to .new
+    ss1 %>% gs_read(ws) %>%
+        mutate_all(as.character) %>% # prevent scientific notation and weird dates
+        write_tsv(ws_new)
+
+    # bak old files of existing and different
+    if(file.exists(ws_tsv) && system2("diff", c(ws_tsv, ws_new))){
+        write(paste0("New content in ", ws_tsv,"backuped old version to ", ws_bak), stderr())
+        file.rename(ws_tsv, ws_bak)
+    }
+    # rename newly downloaded files
+    file.rename(ws_new, ws_tsv)
+}
+#+END_SRC
+
+#+results:
+
+*** gss-up
+Upload spreadsheet from tsv with seletive update
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googlesheets)
+key <- "1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ"
+ss1 <- gs_key(key)
+
+# split sheet into tsvs
+working_sheets <- ss1 %>% gs_ws_ls()
+
+for (ws in working_sheets){
+    ws_tsv <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+    ws_old <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.old')
+
+
+    # if local copy was deleted - also delete on gd
+    if(!file.exists(ws_tsv)){
+        ss1 %>% gs_ws_delete(ws)
+        ss1 <- ss1 %>% gs_gs() # re-register
+        next
+    }
+    
+    # if local copy exists: download and diff
+    ss1 %>% gs_read(ws) %>%
+        mutate_all(as.character) %>% # prevent scientific notation and weird dates
+        write_tsv(ws_old)
+    # diff
+    ws_diff <- system2("diff", c(ws_tsv, ws_old))
+    # upload only if diff
+    if(ws_diff){
+        ss1 %>% gs_ws_delete(ws)
+        ss1 <- ss1 %>% gs_gs() # re-register
+        ss1 %>% gs_ws_new(ws, input=read_tsv(ws_tsv))
+        ss1 <- ss1 %>% gs_gs() # re-register
+    }else{
+        write(paste0("No changes in: ", ws, ". Skipping upload"), stderr())
+    }
+    file.remove(ws_old)
+}
 #+END_SRC
 
