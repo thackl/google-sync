@@ -1,0 +1,82 @@
+* Syncing tsv files with googledrive (and a git repo)
+I want to find a way to sync a metadata git repo and google sheet - to get best
+of both worlds
+
+There seem to be two google sheet APIs (both by Jenny Bryan)
+- googlesheets: https://cran.r-project.org/web/packages/googlesheets/vignettes/basic-usage.html
+- googlesheets4: https://github.com/tidyverse/googlesheets4 (major reboot, in devel)
+
+
+** googlesheets
+
+googlesheets allows me to easily download (sheet -> csv) and upload (csv
+->sheet) files, and extract tabs (worksheets). 
+
+But 
+
+- it doesn't really provide an "update" sheet with new content function, other
+  than doing actual spreadsheet transformations.
+- it doesn't allow to set the 'location' of a new spreadsheet (folder to put it into)
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googlesheets)
+
+# open "sheet" by title
+sheet <- gs_title("sheet")
+
+# open in browser
+sheet %>% gs_browse()
+gs_ws_ls(sheet)
+
+t1 <- sheet %>% gs_read()
+
+ss2 <- gs_new("sheet-01", ws_title = "iris-gs_new", input = head(iris),
+              trim = TRUE, verbose = FALSE)
+ss2 %>% gs_browse()
+gs_delete(ss2)
+#+END_SRC
+
+** googlesheets update working sheets workflow
+using gs_ws_delete, gs_ws_add I should be able to swap entire updates working sheets
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googlesheets)
+key <- "1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ"
+ss1 <- gs_key(key)
+ss1 %>% gs_ws_ls()
+
+ss1 %>% gs_ws_delete("iris-head")
+ss1 <- ss1 %>% gs_gs() # re-register
+ss1 %>% gs_ws_new("iris-head", input=head(iris))
+ss1 <- ss1 %>% gs_gs() # re-register
+ss1
+
+
+
+#1233556277
+#+END_SRC
+
+
+
+** googledrive (tidyverse)
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googledrive)
+library(googlesheets)
+
+drive_find("foo-sheet", type="spreadsheet")
+x <- drive_get(id="1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ")
+write_tsv(head(iris), "/tmp/iris-head.tsv")
+
+# overwrite file
+x %>% drive_update(media="/tmp/iris-head.tsv")
+
+# multiple work sheets
+write_tsv(head(cars), "/tmp/cars-head.tsv")
+# Don't know how this should work - drive isn't really compatible with googlesheets objects
+x %>% drive_update(media="/tmp/cars-head.tsv")
+#+END_SRC
+
