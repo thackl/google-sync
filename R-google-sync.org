@@ -162,3 +162,51 @@ for (ws in working_sheets){
 }
 #+END_SRC
 
+* Syncing Pro/Sar11 files
+- Prochlorococcus :: https://docs.google.com/spreadsheets/d/1IhEKygYDi8xrM2J7AcBmYSqkw3SxeH6F-9_aqWxJ5dI/
+- Sar11 :: https://docs.google.com/spreadsheets/d/1f4Uo8N183NPSWJqyrcf8KeOT7AW86peEBZ-TfPonMK4/
+
+
+#+BEGIN_SRC R
+library(tidyverse)
+library(googlesheets)
+setwd("/home/thackl/projects/research/metadata/genomes/prochlorococcus")
+
+key <- "1IhEKygYDi8xrM2J7AcBmYSqkw3SxeH6F-9_aqWxJ5dI"
+
+gss_read_keys <- function(keys_tsv="gss-keys.tsv"){
+    if(!file.exists(keys_tsv)){
+        stop(paste0("Key file (", keys_tsv, ") specifying keys of google spreadsheets to be synced required"), stderr())
+    }
+    (k1 <- read_tsv(keys_tsv, col_names="key"))
+}
+
+gss_pull(key)
+
+gss_pull <- function(key){
+    ss1 <- gs_key(key)
+
+    # split sheet into tsvs
+    working_sheets <- ss1 %>% gs_ws_ls()
+    ws_pre <- paste0(ss1$sheet_title, "_")
+    for (ws in working_sheets){
+        ws_tsv <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+        ws_new <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.new')
+        ws_bak <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.bak')
+
+        # download all to .new
+        ss1 %>% gs_read(ws) %>%
+            mutate_all(as.character) %>% # prevent scientific notation and weird dates
+            write_tsv(ws_new)
+
+        # bak old files of existing and different
+        if(file.exists(ws_tsv) && system2("diff", c(ws_tsv, ws_new))){
+            write(paste0("New content in ", ws_tsv,"backuped old version to ", ws_bak), stderr())
+            file.rename(ws_tsv, ws_bak)
+        }
+        # rename newly downloaded files
+        file.rename(ws_new, ws_tsv)
+    }
+}
+#+END_SRC
+
