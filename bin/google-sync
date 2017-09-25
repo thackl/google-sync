@@ -1,0 +1,86 @@
+#!/usr/bin/env Rscript
+library(tidyverse)
+library(googlesheets)
+
+main <- function(){
+    cmd_args <- commandArgs(trailingOnly = TRUE)
+    if(length(cmd_args) !=1) stop("\nUsage: gss <command>\n  Commands: pull, push")
+    cmd <- cmd_args[1]
+    if(!(cmd %in% c("push", "pull"))) stop("\nUnknown mode, available: push, pull")
+
+    keys_df <- gss_read_keys();
+    for (key in keys_df$key){
+        do.call(paste0("gss_", cmd), list(key))
+    }
+}
+
+gss_read_keys <- function(keys_tsv="gss-keys.tsv"){
+    if(!file.exists(keys_tsv)){
+        stop(paste0("Key file (", keys_tsv, ") specifying keys of google spreadsheets to be synced required"), stderr())
+    }
+    (k1 <- read_tsv(keys_tsv, col_names="key"))
+}
+
+gss_pull <- function(key){
+    ss1 <- gs_key(key)
+
+    # split sheet into tsvs
+    working_sheets <- ss1 %>% gs_ws_ls()
+    ws_pre <- paste0(ss1$sheet_title, "_")
+    for (ws in working_sheets){
+        ws_tsv <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+        ws_new <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.new')
+        ws_bak <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.bak')
+
+        # download all to .new
+        ss1 %>% gs_read(ws) %>%
+            mutate_all(as.character) %>% # prevent scientific notation and weird dates
+            write_tsv(ws_new)
+
+        # bak old files of existing and different
+        if(file.exists(ws_tsv) && system2("diff", c(ws_tsv, ws_new))){
+            write(paste0("New content in ", ws_tsv,"backuped old version to ", ws_bak), stderr())
+            file.rename(ws_tsv, ws_bak)
+        }
+        # rename newly downloaded files
+        file.rename(ws_new, ws_tsv)
+    }
+}
+
+gss_push <- function(key){
+    ss1 <- gs_key(key)
+
+    # split sheet into tsvs
+    working_sheets <- ss1 %>% gs_ws_ls()
+
+    for (ws in working_sheets){
+        ws_a <- paste0(paste0("tmp_", ss1$sheet_title, "_"), ws, '.tsv')
+        ws_b <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+
+        # if local copy was deleted - also delete on gd
+        if(!file.exists(ws_b)){
+            ss1 %>% gs_ws_delete(ws)
+            ss1 <- ss1 %>% gs_gs() # re-register
+            next
+        }
+        
+        # if local copy exists: download and diff
+        ss1 %>% gs_read(ws) %>%
+            mutate_all(as.character) %>% # prevent scientific notation and weird dates
+            write_tsv(ws_a)
+        # diff
+        ws_diff <- system2("diff", c(ws_a, ws_b))
+        # upload only if diff
+        if(ws_diff){
+            ss1 %>% gs_ws_delete(ws)
+            ss1 <- ss1 %>% gs_gs() # re-register
+            ss1 %>% gs_ws_new(ws, input=read_tsv(ws_b))
+            ss1 <- ss1 %>% gs_gs() # re-register
+        }else{
+            write(paste0("No changes in: ", ws, ". Skipping upload"), stderr())
+        }
+        file.remove(ws_a)
+    }
+}
+
+main();
