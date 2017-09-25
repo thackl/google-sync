@@ -1,4 +1,5 @@
 #!/usr/bin/env Rscript
+library(magrittr)
 library(tidyverse)
 library(googlesheets)
 
@@ -69,13 +70,16 @@ gss_push <- function(key){
             mutate_all(as.character) %>% # prevent scientific notation and weird dates
             write_tsv(ws_a)
         # diff
-        ws_diff <- system2("diff", c(ws_a, ws_b))
+        ws_diff <- system2("diff", c(ws_a, ws_b), stdout=NULL)
         # upload only if diff
         if(ws_diff){
+            write("Deleting outdated worksheet", stderr());
             ss1 %>% gs_ws_delete(ws)
-            ss1 <- ss1 %>% gs_gs() # re-register
-            ss1 %>% gs_ws_new(ws, input=read_tsv(ws_b))
-            ss1 <- ss1 %>% gs_gs() # re-register
+            ss1 %<>% gs_gs() # re-register
+            ws_df <- read_tsv(ws_b)
+            write("Uploading new worksheet, this might take a while", stderr());
+            ss1 %>% gs_ws_new(ws, input=ws_df)
+            ss1 %<>% gs_gs() # re-register
         }else{
             write(paste0("No changes in: ", ws, ". Skipping upload"), stderr())
         }
