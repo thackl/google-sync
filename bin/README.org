@@ -1,0 +1,10 @@
+* Usage
+
+#+BEGIN_SRC sh
+git clone https://github.com/thackl/google-sync.git
+cd google-sync
+echo 1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ > gss-keys.tsv
+google-sync pull # download sheets and split into tsvs
+google-sync push # upload tsvs with changes
+#+END_SRC
+
