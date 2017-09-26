@@ -1,7 +1,12 @@
 #!/usr/bin/env Rscript
 library(magrittr)
 library(tidyverse)
+library(stringr)
+library(googledrive)
 library(googlesheets)
+library(openxlsx)
+
+lp <- "+ "
 
 main <- function(){
     cmd_args <- commandArgs(trailingOnly = TRUE)
@@ -9,13 +14,15 @@ main <- function(){
     cmd <- cmd_args[1]
     if(!(cmd %in% c("push", "pull"))) stop("\nUnknown mode, available: push, pull")
 
+    gs_auth()
+
     keys_df <- gss_read_keys();
     for (key in keys_df$key){
         do.call(paste0("gss_", cmd), list(key))
     }
 }
 
-gss_read_keys <- function(keys_tsv="gss-keys.tsv"){
+gss_read_keys <- function(keys_tsv="google-sync-keys.tsv"){
     if(!file.exists(keys_tsv)){
         stop(paste0("Key file (", keys_tsv, ") specifying keys of google spreadsheets to be synced required"), stderr())
     }
@@ -24,24 +31,28 @@ gss_read_keys <- function(keys_tsv="gss-keys.tsv"){
 
 gss_pull <- function(key){
     ss1 <- gs_key(key)
+    ss_title <- ss1$sheet_title
 
     # split sheet into tsvs
     working_sheets <- ss1 %>% gs_ws_ls()
-    ws_pre <- paste0(ss1$sheet_title, "_")
+    ws_pre <- paste0(ss_title, "_")
     for (ws in working_sheets){
-        ws_tsv <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
-        ws_new <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.new')
-        ws_bak <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv.bak')
+        ws_tsv <- paste0(paste0(ss_title, "_"), ws, '.tsv')
+        ws_new <- paste0(paste0(ss_title, "_"), ws, '.tsv.new')
+        ws_bak <- paste0(paste0(ss_title, "_"), ws, '.tsv.bak')
 
         # download all to .new
-        ss1 %>% gs_read(ws) %>%
-            mutate_all(as.character) %>% # prevent scientific notation and weird dates
-            write_tsv(ws_new)
+        df <- ss1 %>% gs_read(ws) %>%
+            # mutate all non-NA to chars to prevent scientific notation and weird dates
+            mutate_all(funs(ifelse(is.na(.), ., as.character(.)))) %>%
+            write_tsv(ws_new, na="")
 
         # bak old files of existing and different
-        if(file.exists(ws_tsv) && system2("diff", c(ws_tsv, ws_new))){
-            write(paste0("New content in ", ws_tsv,"backuped old version to ", ws_bak), stderr())
+        if(file.exists(ws_tsv) && system2("diff", c(ws_tsv, ws_new), stdout=NULL)){
+            write(paste0(lp, "New content in ", ws_tsv,", backed up old version to ", ws_bak), stderr())
             file.rename(ws_tsv, ws_bak)
+        }else{
+            write(paste0(lp, "Files updated, but no changes found in contents of ", ss_title), stderr())
         }
         # rename newly downloaded files
         file.rename(ws_new, ws_tsv)
@@ -50,40 +61,59 @@ gss_pull <- function(key){
 
 gss_push <- function(key){
     ss1 <- gs_key(key)
+    ss_title <- ss1$sheet_title
 
     # split sheet into tsvs
-    working_sheets <- ss1 %>% gs_ws_ls()
+    wss_gs <- ss1 %>% gs_ws_ls()
+    # local files
+    wss_lc_tsv <- list.files(pattern=paste0("^", ss_title, "_.*\\.tsv$"))
+    # strip prefix and .tsv
+    wss_lc <- wss_lc_tsv %>% str_replace("\\.tsv$", "") %>% str_replace(paste0("^", ss_title, "_"), "")
+    # retain gs ws sort order
+    wss_lc <- wss_lc[order(match(wss_lc, wss_gs))]
 
-    for (ws in working_sheets){
-        ws_a <- paste0(paste0("tmp_", ss1$sheet_title, "_"), ws, '.tsv')
-        ws_b <- paste0(paste0(ss1$sheet_title, "_"), ws, '.tsv')
+    has_diff <- FALSE
 
-        # if local copy was deleted - also delete on gd
-        if(!file.exists(ws_b)){
-            ss1 %>% gs_ws_delete(ws)
-            ss1 <- ss1 %>% gs_gs() # re-register
-            next
+    if(length(wss_lc) != length(wss_gs) || any(wss_gs!=wss_lc)){
+        # diff in ws comp
+        has_diff <- TRUE
+    }else{
+        # content diff
+        for (ws in wss_gs){
+            ws_gs <- paste0(paste0(ss_title, "_"), ws, '.tsv.tmp')
+            ws_lc <- paste0(paste0(ss_title, "_"), ws, '.tsv')
+
+            # if local copy exists: download and diff
+            ss1 %>% gs_read(ws) %>%
+                mutate_all(as.character) %>% # prevent scientific notation and weird dates
+                write_tsv(ws_gs, na="")
+            # diff
+            ws_diff <- system2("diff", c(ws_lc, ws_gs), stdout=NULL)
+            file.remove(ws_gs) # remove tmp
+            if(ws_diff) {
+                has_diff <- TRUE
+                break
+            }
         }
-        
-        # if local copy exists: download and diff
-        ss1 %>% gs_read(ws) %>%
-            mutate_all(as.character) %>% # prevent scientific notation and weird dates
-            write_tsv(ws_a)
-        # diff
-        ws_diff <- system2("diff", c(ws_a, ws_b), stdout=NULL)
-        # upload only if diff
-        if(ws_diff){
-            write("Deleting outdated worksheet", stderr());
-            ss1 %>% gs_ws_delete(ws)
-            ss1 %<>% gs_gs() # re-register
-            ws_df <- read_tsv(ws_b)
-            write("Uploading new worksheet, this might take a while", stderr());
-            ss1 %>% gs_ws_new(ws, input=ws_df)
-            ss1 %<>% gs_gs() # re-register
-        }else{
-            write(paste0("No changes in: ", ws, ". Skipping upload"), stderr())
+    }
+
+    # merge tsv in tmp xlsx and update gs sheet
+    if(has_diff){
+        write(paste0(lp, "Changes detected in ", ss_title, " uploading ..."), stderr())
+        wss_xlsx <- paste0(ss_title, '.xlsx')
+        wss_list <- list()
+        for(ws in wss_lc){
+            wss_list[[ws]] <- read_tsv(paste0(ss_title, "_", ws, ".tsv")) %>%
+                mutate_all(as.character) # prevent scientific notation and weird dates
         }
-        file.remove(ws_a)
+
+        # write xlsx, upload, cleanup
+        write.xlsx(wss_list, wss_xlsx)
+        ss <- drive_get(id=key)
+        ss %>% drive_update(media=wss_xlsx)
+        file.remove(wss_xlsx)
+    }else{
+        write(paste0(lp, "No changes found  in: ", ss_title , ". Skipping upload"), stderr())
     }
 }
 

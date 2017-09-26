@@ -74,18 +74,8 @@ write_tsv(head(cars), "/tmp/cars-head.tsv")
 x %>% drive_update(media="/tmp/cars-head.tsv")
 #+END_SRC
 
-** sync scripts
 
-#+BEGIN_SRC sh
-# Start from google sheet
-gss-sync
-
-# sheet from tsv
-init-from-tsv
-
-#+END_SRC
-
-*** gss-down
+*** pull
 Download spread sheet and split into tsv
 
 #+BEGIN_SRC R
@@ -119,7 +109,7 @@ for (ws in working_sheets){
 
 #+results:
 
-*** gss-up
+*** push
 Upload spreadsheet from tsv with seletive update
 
 #+BEGIN_SRC R
@@ -161,6 +151,25 @@ for (ws in working_sheets){
     file.remove(ws_old)
 }
 #+END_SRC
+
+*** gs_ws_new() too slow
+gs_ws_new doesn't do bulk upload of new data, but still some per cell/row magic
+that takes forever with 1000x41 spreadsheet.
+
+Might have to go via drive_update and tmp excel spreadsheet for upload
+
+Need a way to write a tmp xls/xlsx sheet
+https://github.com/awalker89/openxlsx
+#+BEGIN_SRC R
+#install.packages("openxlsx", dependencies=TRUE)
+library(openxlsx)
+library(tidyverse)
+
+cars
+iris
+write.xlsx(list(cars=cars, iris=iris), "foo.xlsx")
+#+END_SRC
+
 
 * Syncing Pro/Sar11 files
 - Prochlorococcus :: https://docs.google.com/spreadsheets/d/1IhEKygYDi8xrM2J7AcBmYSqkw3SxeH6F-9_aqWxJ5dI/
