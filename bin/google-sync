@@ -22,6 +22,8 @@ main <- function(){
     }
 }
 
+is.Date <- function(x) inherits(x, "Date")
+
 gss_read_keys <- function(keys_tsv="google-sync-keys.tsv"){
     if(!file.exists(keys_tsv)){
         stop(paste0("Key file (", keys_tsv, ") specifying keys of google spreadsheets to be synced required"), stderr())
@@ -104,8 +106,11 @@ gss_push <- function(key){
         wss_list <- list()
         for(ws in wss_lc){
             wss_list[[ws]] <- read_tsv(paste0(ss_title, "_", ws, ".tsv")) %>%
-                mutate_all(as.character) # prevent scientific notation and weird dates
-        }
+                # NOTE: don't characterize numbers, google converts scientific
+                # notation to plain anyway, and it only formats columns as numbers
+                # if they were 'numeric' in xlsx.
+                mutate_if(is.Date, as.character) # prevent weird dates
+         }
 
         # write xlsx, upload, cleanup
         write.xlsx(wss_list, wss_xlsx)

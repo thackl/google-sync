@@ -170,6 +170,51 @@ iris
 write.xlsx(list(cars=cars, iris=iris), "foo.xlsx")
 #+END_SRC
 
+** keep numbers as numbers in google
+Currently, I am converting numbers to strings prior to tsv export to prevent
+scientific notation issues and weird date formats. I use the same approach when
+merging .tsv files into the .xlsx that is than uploaded to google. In google
+numeric columns are formated as characters - I suspect because they were
+characters in the .xlsx.
+
+Google turns scientific numbers into plain numbers anyway, so no need to deal
+with those while constructing the xlsx. Dates need to be converted to
+characters, though, to retain the format.
+
+#+BEGIN_SRC R
+#!/usr/bin/env Rscript
+library(magrittr)
+library(tidyverse)
+library(stringr)
+library(googledrive)
+library(googlesheets)
+library(openxlsx)
+
+ss <- drive_get(id="1ZvA2mq8e99BPECqA_B_YIeVp-1vvnlNBf6GG0CAfehQ")
+ws_tsv <- "/tmp/iris-head.tsv"
+ws_xlsx <- "/tmp/iris-head.xlsx"
+
+d1 <- head(iris)
+
+d1[1,1] <- 5e10
+
+d1$date <- as.Date("1999-12-02")
+is.numeric.Date(d1$date)
+is.Date(d1$date)
+
+write_tsv(d1, ws_tsv)
+
+is.Date <- function(x) inherits(x, "Date")
+
+ws <- read_tsv(ws_tsv) %>%
+    mutate_if(is.Date, as.character) # prevent scientific notation and weird dates
+
+# write xlsx, upload, cleanup
+write.xlsx(ws, ws_xlsx)
+ss %>% drive_update(media=ws_xlsx)
+#+END_SRC
+
+
 
 * Syncing Pro/Sar11 files
 - Prochlorococcus :: https://docs.google.com/spreadsheets/d/1IhEKygYDi8xrM2J7AcBmYSqkw3SxeH6F-9_aqWxJ5dI/
