@@ -12,7 +12,7 @@ main <- function(){
     cmd_args <- commandArgs(trailingOnly = TRUE)
     if(length(cmd_args) !=1) stop("\nUsage: gss <command>\n  Commands: pull, push")
     cmd <- cmd_args[1]
-    if(!(cmd %in% c("push", "pull"))) stop("\nUnknown mode, available: push, pull")
+    if(!(cmd %in% c("pull", "push", "push-force"))) stop("\nUnknown mode, available: push, pull")
 
     gs_auth()
 
@@ -61,7 +61,11 @@ gss_pull <- function(key){
     }
 }
 
-gss_push <- function(key){
+`gss_push-force` <- function(...){
+    gss_push(..., force=TRUE)
+}
+
+gss_push <- function(key, force=FALSE){
     ss1 <- gs_key(key)
     ss_title <- ss1$sheet_title
 
@@ -76,7 +80,9 @@ gss_push <- function(key){
 
     has_diff <- FALSE
 
-    if(length(wss_lc) != length(wss_gs) || any(wss_gs!=wss_lc)){
+    if(force){
+        has_diff <- TRUE
+    }else if(length(wss_lc) != length(wss_gs) || any(wss_gs!=wss_lc)){
         # diff in ws comp
         has_diff <- TRUE
     }else{
